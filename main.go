@@ -882,6 +882,19 @@ func main() {
 	}
 
 	ctx := context.Background()
+
+	/* 2024-02-09 Fix connection leak: Start */
+	sqlDB, err := db.DB()
+	if err != nil {
+		logger.Printf("get sql.DB error: %v", err)
+		return
+	}
+	// 設定連線池限制，避免長期佔用造成 500 error
+	sqlDB.SetMaxIdleConns(5)
+	sqlDB.SetMaxOpenConns(10)
+	sqlDB.SetConnMaxLifetime(time.Hour)
+	/* 2024-02-09 Fix connection leak: End */
+
 	tables := []string{
 		"acc_cashbook",
 		"acc_expenses",
