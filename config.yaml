@@ -1,0 +1,12 @@
+mode: development
+
+database:
+  development:
+    dialect: mysql
+    dsn: root:123@tcp(127.0.0.1:3306)/accounting-report?charset=utf8mb4&parseTime=True&loc=Local
+
+dirs:
+    logs: C:\Users\于培琳\Documents\192-168-105-11\work\projects-73\1001-twacc-recompute\twacc_service\files\recompute_logs
+
+recompute_batch_size: 100
+isdebug: 1
