@@ -138,6 +138,7 @@ var TableFieldMappings = map[string]FieldMapping{
 			{Base: "withdraw_amount", Usdt: "withdraw_amount_usdt", Cny: "withdraw_amount_cny"},
 			{Base: "commission", Usdt: "commission_usdt", Cny: "commission_cny"},
 			{Base: "discount", Usdt: "discount_usdt", Cny: "discount_cny"},
+			{Base: "first_topup_amount", Usdt: "first_topup_amount_USDT", Cny: "first_topup_amount_CNY"},
 			{Base: "manual_score_increase", Usdt: "manual_score_increase_usdt", Cny: "manual_score_increase_cny"},
 			{Base: "manual_score_decrease", Usdt: "manual_score_decrease_usdt", Cny: "manual_score_decrease_cny"},
 			{Base: "total_score_balance", Usdt: "total_score_balance_usdt", Cny: "total_score_balance_cny"},
@@ -503,18 +504,9 @@ func computeUpdateCached(mapping FieldMapping, sets []AmountFieldSet, rec record
 
 	for _, set := range sets {
 		baseCol, usdtCol, cnyCol := set.Base, set.Usdt, set.Cny
-		// baseVal, ok := rec.Amounts[baseCol]
-		// if !ok {
-		// 	continue
-		// }
-		//0206 debug log：若有金額欄位但資料裡沒有，記錄下來 jamie
+		// 0212 金額欄位值為空（並非零)不做換算
 		baseVal, ok := rec.Amounts[baseCol]
 		if !ok {
-			amountKeys := make([]string, 0, len(rec.Amounts))
-			for k := range rec.Amounts {
-				amountKeys = append(amountKeys, k)
-			}
-			logger.Printf("[debug][%s][%d] base column not found: %s | amounts keys=%v", table, rec.ID, baseCol, amountKeys)
 			continue
 		}
 
@@ -522,13 +514,7 @@ func computeUpdateCached(mapping FieldMapping, sets []AmountFieldSet, rec record
 		if table == "acc_channel_info" {
 			continue
 		}
-
-		if !baseVal.Valid {
-			logger.Printf("[%s][%d] base is NULL => skip FX update (base=%s usdt=%s cny=%s)", table, rec.ID, baseCol, usdtCol, cnyCol)
-			allOK = false
-			rateReason = appendReason(rateReason, baseCol+" NULL")
-			continue
-		}
+		// 金額欄位為空(非零)，不做換算
 		if !rec.Currency.Valid || !rec.EntryDate.Valid {
 			allOK = false
 			if !rec.Currency.Valid {
@@ -586,13 +572,6 @@ func computeUpdateCached(mapping FieldMapping, sets []AmountFieldSet, rec record
 			allOK = false
 			rateReason = appendReason(rateReason, rReason)
 		}
-	}
-
-	// 若有金額欄位但一欄都沒成功換算，仍視為失敗 0206 debug jamie
-	if table != "acc_channel_info" && len(sets) > 0 && convertedCount == 0 {
-		logger.Printf("[debug][%s][%d] convertedCount=0 currency=%v entry_date=%v amounts=%v", table, rec.ID, rec.Currency, rec.EntryDate, rec.Amounts)
-		allOK = false
-		rateReason = appendReason(rateReason, "no amount converted")
 	}
 
 	// 辦公/站點補齊
@@ -809,30 +788,7 @@ func handleTable(ctx context.Context, db *gorm.DB, table string, batchSize int, 
 			continue
 		}
 
-		// 快車道
-		// err = db.Table(table).
-		// 	Clauses(clause.OnConflict{
-		// 		Columns:   []clause.Column{{Name: mapping.IDColumn}},
-		// 		DoUpdates: clause.AssignmentColumns(mapKeys(updateCols)),
-		// 	}).
-		// 	Create(updatesBatch).Error
-
-		// if err != nil {
-		// 	logger.Printf("[recompute][%s] fast-path failed: %v, fallback to per-row", table, err)
-		// 	for _, row := range updatesBatch { // 慢車道
-		// 		id := row[mapping.IDColumn]
-		// 		delete(row, mapping.IDColumn)
-		// 		res := db.Table(table).Where(fmt.Sprintf("%s = ? AND status = 2", mapping.IDColumn), id).Updates(row)
-		// 		if res.Error != nil {
-		// 			logger.Printf("[recompute][%s][%v] slow-path error: %v", table, id, res.Error)
-		// 		}
-		// 	}
-		// }
-
 		// 快車道：批次 UPDATE（無插入路徑）
-		// err = batchUpdate(ctx, db, table, mapping.IDColumn, updatesBatch)
-		//0204 加入 sql log
-		// err = batchUpdate(ctx, db, table, mapping.IDColumn, updatesBatch, logger)
 		err = batchUpdate(ctx, db, table, mapping.IDColumn, updatesBatch, batchSize, debug, logger)
 
 		if err != nil {
