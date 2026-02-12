@@ -488,7 +488,6 @@ func lookupRateCached(rateMap map[rateKey]float64, date time.Time, from, to stri
 }
 
 // ---------- per-record 計算（用 cache，不打 DB） ----------
-// 0206jamie: 調整 computeUpdateCached，
 func computeUpdateCached(mapping FieldMapping, sets []AmountFieldSet, rec recordRow,
 	siteMap, subMap map[string]officeInfo, rateMap map[rateKey]float64,
 	table string, logger *log.Logger) (map[string]any, string) {
@@ -497,7 +496,6 @@ func computeUpdateCached(mapping FieldMapping, sets []AmountFieldSet, rec record
 	allOK := (officeReason == "")
 	rateReason := ""
 	update := map[string]any{}
-	convertedCount := 0 // 至少有一個金額成功換算才算成功
 
 	cur := strings.ToUpper(strings.TrimSpace(rec.Currency.String))
 	dt := rec.EntryDate.Time
@@ -515,6 +513,12 @@ func computeUpdateCached(mapping FieldMapping, sets []AmountFieldSet, rec record
 			continue
 		}
 		// 金額欄位為空(非零)，不做換算
+		if !baseVal.Valid {
+			update[usdtCol] = nil // base 為 NULL 時，衍生金額也設為 NULL
+			update[cnyCol] = nil
+			continue
+		}
+
 		if !rec.Currency.Valid || !rec.EntryDate.Valid {
 			allOK = false
 			if !rec.Currency.Valid {
@@ -567,7 +571,6 @@ func computeUpdateCached(mapping FieldMapping, sets []AmountFieldSet, rec record
 		if rateOK {
 			update[cnyCol] = amountCny
 			update[usdtCol] = amountUsdt
-			convertedCount++
 		} else {
 			allOK = false
 			rateReason = appendReason(rateReason, rReason)
