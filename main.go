@@ -138,6 +138,7 @@ var TableFieldMappings = map[string]FieldMapping{
 			{Base: "withdraw_amount", Usdt: "withdraw_amount_usdt", Cny: "withdraw_amount_cny"},
 			{Base: "commission", Usdt: "commission_usdt", Cny: "commission_cny"},
 			{Base: "discount", Usdt: "discount_usdt", Cny: "discount_cny"},
+			{Base: "first_topup_amount", Usdt: "first_topup_amount_USDT", Cny: "first_topup_amount_CNY"},
 			{Base: "manual_score_increase", Usdt: "manual_score_increase_usdt", Cny: "manual_score_increase_cny"},
 			{Base: "manual_score_decrease", Usdt: "manual_score_decrease_usdt", Cny: "manual_score_decrease_cny"},
 			{Base: "total_score_balance", Usdt: "total_score_balance_usdt", Cny: "total_score_balance_cny"},
@@ -461,13 +462,15 @@ func resolveOfficeCached(mapping FieldMapping, rec recordRow, siteMap, subMap ma
 		if oi, ok := siteMap[rec.SiteCode]; ok {
 			return oi, ""
 		}
-		return officeInfo{}, "office not found by site_code"
+		// return officeInfo{}, "office not found by site_code"
+		return officeInfo{}, "大小辦公室不存在"
 	}
 	if mapping.SubCode != "" && rec.SubCode != "" {
 		if oi, ok := subMap[rec.SubCode]; ok {
 			return oi, ""
 		}
-		return officeInfo{}, "office not found by sub_code"
+		// return officeInfo{}, "office not found by sub_code"
+		return officeInfo{}, "大小辦公室不存在"
 	}
 	return officeInfo{}, ""
 }
@@ -483,11 +486,12 @@ func lookupRateCached(rateMap map[rateKey]float64, date time.Time, from, to stri
 	if r, ok := rateMap[k]; ok {
 		return r, nil
 	}
-	return 0, fmt.Errorf("lookupRate: no rate for %s %s->%s", k.Date, from, to)
+	// return 0, fmt.Errorf("lookupRate: no rate for %s %s->%s", k.Date, from, to)
+	// return 0, fmt.Errorf("貨幣設置缺少:日期:%s 原幣別:%s->兌換幣別:%s", k.Date, from, to)
+	return 0, fmt.Errorf("日期:%s 幣別:%s 匯率不存在", k.Date, from)
 }
 
 // ---------- per-record 計算（用 cache，不打 DB） ----------
-// 0206jamie: 調整 computeUpdateCached，
 func computeUpdateCached(mapping FieldMapping, sets []AmountFieldSet, rec recordRow,
 	siteMap, subMap map[string]officeInfo, rateMap map[rateKey]float64,
 	table string, logger *log.Logger) (map[string]any, string) {
@@ -495,26 +499,17 @@ func computeUpdateCached(mapping FieldMapping, sets []AmountFieldSet, rec record
 	office, officeReason := resolveOfficeCached(mapping, rec, siteMap, subMap)
 	allOK := (officeReason == "")
 	rateReason := ""
+	rateReasonSeen := map[string]struct{}{} //0213，避免同一筆資料因多個金額欄位缺匯率而重複累加原因
 	update := map[string]any{}
-	convertedCount := 0 // 至少有一個金額成功換算才算成功
 
 	cur := strings.ToUpper(strings.TrimSpace(rec.Currency.String))
 	dt := rec.EntryDate.Time
 
 	for _, set := range sets {
 		baseCol, usdtCol, cnyCol := set.Base, set.Usdt, set.Cny
-		// baseVal, ok := rec.Amounts[baseCol]
-		// if !ok {
-		// 	continue
-		// }
-		//0206 debug log：若有金額欄位但資料裡沒有，記錄下來 jamie
+		// 0212 金額欄位值為空（並非零)不做換算
 		baseVal, ok := rec.Amounts[baseCol]
 		if !ok {
-			amountKeys := make([]string, 0, len(rec.Amounts))
-			for k := range rec.Amounts {
-				amountKeys = append(amountKeys, k)
-			}
-			logger.Printf("[debug][%s][%d] base column not found: %s | amounts keys=%v", table, rec.ID, baseCol, amountKeys)
 			continue
 		}
 
@@ -522,20 +517,22 @@ func computeUpdateCached(mapping FieldMapping, sets []AmountFieldSet, rec record
 		if table == "acc_channel_info" {
 			continue
 		}
-
+		// 金額欄位為空(非零)，不做換算
 		if !baseVal.Valid {
-			logger.Printf("[%s][%d] base is NULL => skip FX update (base=%s usdt=%s cny=%s)", table, rec.ID, baseCol, usdtCol, cnyCol)
-			allOK = false
-			rateReason = appendReason(rateReason, baseCol+" NULL")
+			update[usdtCol] = nil // base 為 NULL 時，衍生金額也設為 NULL
+			update[cnyCol] = nil
 			continue
 		}
+
 		if !rec.Currency.Valid || !rec.EntryDate.Valid {
 			allOK = false
 			if !rec.Currency.Valid {
-				rateReason = appendReason(rateReason, "currency NULL")
+				// rateReason = appendReason(rateReason, "currency NULL")
+				rateReason = appendReason(rateReason, "幣別不存在")
 			}
 			if !rec.EntryDate.Valid {
-				rateReason = appendReason(rateReason, "entry_date NULL")
+				// rateReason = appendReason(rateReason, "entry_date NULL")
+				rateReason = appendReason(rateReason, "帳務日期不存在")
 			}
 			continue
 		}
@@ -581,18 +578,17 @@ func computeUpdateCached(mapping FieldMapping, sets []AmountFieldSet, rec record
 		if rateOK {
 			update[cnyCol] = amountCny
 			update[usdtCol] = amountUsdt
-			convertedCount++
 		} else {
 			allOK = false
-			rateReason = appendReason(rateReason, rReason)
+			// rateReason = appendReason(rateReason, rReason)
+			// 0213 已改為只累一次原因，避免同一筆資料因多個金額欄位缺匯率而重複累加原因
+			if rReason != "" {
+				if _, ok := rateReasonSeen[rReason]; !ok {
+					rateReasonSeen[rReason] = struct{}{}
+					rateReason = appendReason(rateReason, rReason)
+				}
+			}
 		}
-	}
-
-	// 若有金額欄位但一欄都沒成功換算，仍視為失敗 0206 debug jamie
-	if table != "acc_channel_info" && len(sets) > 0 && convertedCount == 0 {
-		logger.Printf("[debug][%s][%d] convertedCount=0 currency=%v entry_date=%v amounts=%v", table, rec.ID, rec.Currency, rec.EntryDate, rec.Amounts)
-		allOK = false
-		rateReason = appendReason(rateReason, "no amount converted")
 	}
 
 	// 辦公/站點補齊
@@ -639,10 +635,14 @@ func appendReason(cur, add string) string {
 func buildReason(officeReason, rateReason string) string {
 	parts := []string{}
 	if officeReason != "" {
-		parts = append(parts, "office_reason="+officeReason)
+		// parts = append(parts, "office_reason="+officeReason)
+		// parts = append(parts, "辦公室原因="+officeReason)
+		parts = append(parts, "- "+officeReason)
 	}
 	if rateReason != "" {
-		parts = append(parts, "rate_reason="+rateReason)
+		// parts = append(parts, "rate_reason="+rateReason)
+		// parts = append(parts, "匯率原因="+rateReason)
+		parts = append(parts, "- "+rateReason)
 	}
 	return strings.Join(parts, "; ")
 }
@@ -809,30 +809,7 @@ func handleTable(ctx context.Context, db *gorm.DB, table string, batchSize int, 
 			continue
 		}
 
-		// 快車道
-		// err = db.Table(table).
-		// 	Clauses(clause.OnConflict{
-		// 		Columns:   []clause.Column{{Name: mapping.IDColumn}},
-		// 		DoUpdates: clause.AssignmentColumns(mapKeys(updateCols)),
-		// 	}).
-		// 	Create(updatesBatch).Error
-
-		// if err != nil {
-		// 	logger.Printf("[recompute][%s] fast-path failed: %v, fallback to per-row", table, err)
-		// 	for _, row := range updatesBatch { // 慢車道
-		// 		id := row[mapping.IDColumn]
-		// 		delete(row, mapping.IDColumn)
-		// 		res := db.Table(table).Where(fmt.Sprintf("%s = ? AND status = 2", mapping.IDColumn), id).Updates(row)
-		// 		if res.Error != nil {
-		// 			logger.Printf("[recompute][%s][%v] slow-path error: %v", table, id, res.Error)
-		// 		}
-		// 	}
-		// }
-
 		// 快車道：批次 UPDATE（無插入路徑）
-		// err = batchUpdate(ctx, db, table, mapping.IDColumn, updatesBatch)
-		//0204 加入 sql log
-		// err = batchUpdate(ctx, db, table, mapping.IDColumn, updatesBatch, logger)
 		err = batchUpdate(ctx, db, table, mapping.IDColumn, updatesBatch, batchSize, debug, logger)
 
 		if err != nil {
