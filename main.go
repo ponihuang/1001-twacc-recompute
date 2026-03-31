@@ -199,6 +199,20 @@ var TableFieldMappings = map[string]FieldMapping{
 			{Base: "profit_and_loss", Usdt: "profit_and_loss_USDT", Cny: "profit_and_loss_CNY"},
 		},
 	},
+	"acc_operational_information_excel": {
+		MainCode: "main_office", SubCode: "sub_office", SiteCode: "site_code", IDColumn: "id",
+		AmountSets: []AmountFieldSet{
+			{Base: "amount", Usdt: "amount_usdt", Cny: "amount_cny"},
+			{Base: "bet_amount", Usdt: "bet_amount_usdt", Cny: "bet_amount_cny"},
+		},
+	},
+	"acc_recharge_withdraw_excel": {
+		MainCode: "main_office", SubCode: "sub_office", SiteCode: "site_code", IDColumn: "id",
+		AmountSets: []AmountFieldSet{
+			{Base: "amount", Usdt: "amount_usdt", Cny: "amount_cny"},
+			{Base: "converted_amount", Usdt: "converted_amount_usdt", Cny: "converted_amount_cny"},
+		},
+	},
 }
 
 // ---------- helpers ----------
@@ -882,6 +896,8 @@ func main() {
 		"acc_balance_sheet",
 		"acc_revenue_expense_adjustments",
 		"acc_operational_information",
+		"acc_operational_information_excel",
+		"acc_recharge_withdraw_excel",
 	}
 
 	for {
