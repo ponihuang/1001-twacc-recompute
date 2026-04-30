@@ -213,6 +213,12 @@ var TableFieldMappings = map[string]FieldMapping{
 			{Base: "converted_amount", Usdt: "converted_amount_usdt", Cny: "converted_amount_cny"},
 		},
 	},
+	"account_summary": {
+		MainCode: "main_office", SubCode: "sub_office", SiteCode: "site_code", IDColumn: "id",
+		AmountSets: []AmountFieldSet{
+			{Base: "amount", Usdt: "amount_usdt", Cny: "amount_cny"},
+		},
+	},
 }
 
 // ---------- helpers ----------
