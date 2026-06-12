@@ -22,13 +22,13 @@ import (
 // ---------- config ----------
 
 type Config struct {
-	Mode               string `yaml:"mode"`
-	RecomputeBatchSize int    `yaml:"recompute_batch_size"`
-	IsDebug            int    `yaml:"isdebug"` // 新增
+	// Mode               string `yaml:"mode"`
+	RecomputeBatchSize int `yaml:"recompute_batch_size"`
+	IsDebug            int `yaml:"isdebug"` // 新增
 	Database           struct {
 		Development struct {
-			Dialect string `yaml:"dialect"`
-			DSN     string `yaml:"dsn"`
+			// Dialect string `yaml:"dialect"`
+			DSN string `yaml:"dsn"`
 		} `yaml:"development"`
 	} `yaml:"database"`
 	Dirs struct {
@@ -78,9 +78,6 @@ type AmountFieldSet struct {
 }
 
 type FieldMapping struct {
-	BaseAmount string
-	CnyAmount  string
-	UsdtAmount string
 	MainCode   string
 	SubCode    string
 	SiteCode   string
@@ -89,12 +86,14 @@ type FieldMapping struct {
 }
 
 type recordRow struct {
-	ID        uint64
-	Currency  sql.NullString
-	EntryDate sql.NullTime
-	SubCode   string
-	SiteCode  string
-	Amounts   map[string]sql.NullFloat64 // key: column name
+	ID             uint64
+	Currency       sql.NullString
+	EntryDate      sql.NullTime
+	SubCode        string
+	SiteCode       string
+	FromTable      string
+	TargetSiteCode string
+	Amounts        map[string]sql.NullFloat64
 }
 
 type officeInfo struct {
@@ -106,9 +105,7 @@ type officeInfo struct {
 	Site       string
 }
 
-// ---------- table mappings (同原本) ---------
-/* 省略：保持原 TableFieldMappings 全表定義，與你現有一致即可 */
-
+// ---------- table mappings 全表定義---------
 var TableFieldMappings = map[string]FieldMapping{
 	"acc_cashbook": {
 		MainCode: "main_office", SubCode: "sub_code", IDColumn: "id",
@@ -118,21 +115,21 @@ var TableFieldMappings = map[string]FieldMapping{
 		},
 	},
 	"acc_expenses": {
-		MainCode: "main_office", SubCode: "sub_office", SiteCode: "site_code", IDColumn: "id",
+		MainCode: "main_office", SiteCode: "site_code", IDColumn: "id",
 		AmountSets: []AmountFieldSet{
 			{Base: "amount", Usdt: "amount_usdt", Cny: "amount_cny"},
-			{Base: "converted_amount", Usdt: "converted_amount_usdt", Cny: "converted_amount_cny"},
+			// {Base: "converted_amount", Usdt: "converted_amount_usdt", Cny: "converted_amount_cny"},
 		},
 	},
 	"acc_borrow_lend": {
-		MainCode: "main_office", SubCode: "sub_office", SiteCode: "site_code", IDColumn: "id",
+		MainCode: "main_office", SiteCode: "site_code", IDColumn: "id",
 		AmountSets: []AmountFieldSet{
 			{Base: "amount", Usdt: "amount_usdt", Cny: "amount_cny"},
-			{Base: "converted_amount", Usdt: "converted_amount_usdt", Cny: "converted_amount_cny"},
+			// {Base: "converted_amount", Usdt: "converted_amount_usdt", Cny: "converted_amount_cny"},
 		},
 	},
 	"acc_recharge_withdraw": {
-		MainCode: "main_office", SubCode: "sub_office", SiteCode: "site_code", IDColumn: "id",
+		MainCode: "main_office", SiteCode: "site_code", IDColumn: "id",
 		AmountSets: []AmountFieldSet{
 			{Base: "recharge_amount", Usdt: "recharge_amount_usdt", Cny: "recharge_amount_cny"},
 			{Base: "withdraw_amount", Usdt: "withdraw_amount_usdt", Cny: "withdraw_amount_cny"},
@@ -145,10 +142,10 @@ var TableFieldMappings = map[string]FieldMapping{
 		},
 	},
 	"acc_channel_info": {
-		MainCode: "main_office", SubCode: "sub_office", SiteCode: "site_code", IDColumn: "id",
+		MainCode: "main_office", SiteCode: "site_code", IDColumn: "id",
 	},
 	"acc_ad_performance_analysis": {
-		MainCode: "main_office", SubCode: "sub_office", SiteCode: "site_code", IDColumn: "id",
+		MainCode: "main_office", SiteCode: "site_code", IDColumn: "id",
 		AmountSets: []AmountFieldSet{
 			{Base: "first_topup_amount", Usdt: "first_topup_amount_USDT", Cny: "first_topup_amount_CNY"},
 			{Base: "repeat_topup_amount", Usdt: "repeat_topup_amount_USDT", Cny: "repeat_topup_amount_CNY"},
@@ -166,7 +163,7 @@ var TableFieldMappings = map[string]FieldMapping{
 		},
 	},
 	"acc_balance_sheet": {
-		MainCode: "main_office", SubCode: "sub_office", SiteCode: "site_code", IDColumn: "id",
+		MainCode: "main_office", SiteCode: "site_code", IDColumn: "id",
 		AmountSets: []AmountFieldSet{
 			{Base: "ending_amount", Usdt: "ending_amount_USDT", Cny: "ending_amount_CNY"},
 			{Base: "income_amount", Usdt: "income_amount_USDT", Cny: "income_amount_CNY"},
@@ -179,20 +176,20 @@ var TableFieldMappings = map[string]FieldMapping{
 			{Base: "opening_balance", Usdt: "opening_balance_USDT", Cny: "opening_balance_CNY"},
 			{Base: "backend_revenue", Usdt: "backend_revenue_USDT", Cny: "backend_revenue_CNY"},
 			{Base: "order_adjustment", Usdt: "order_adjustment_USDT", Cny: "order_adjustment_CNY"},
-			{Base: "converted_amount", Usdt: "converted_amount_USDT", Cny: "converted_amount_CNY"},
-			{Base: "balance_verification", Usdt: "balance_verification_USDT", Cny: "balance_verification_CNY"},
-			{Base: "difference", Usdt: "difference_USDT", Cny: "difference_CNY"},
+			// {Base: "converted_amount", Usdt: "converted_amount_USDT", Cny: "converted_amount_CNY"},
+			// {Base: "balance_verification", Usdt: "balance_verification_USDT", Cny: "balance_verification_CNY"},
+			// {Base: "difference", Usdt: "difference_USDT", Cny: "difference_CNY"},
 		},
 	},
 	"acc_revenue_expense_adjustments": {
-		MainCode: "main_office", SubCode: "sub_office", SiteCode: "site_code", IDColumn: "id",
+		MainCode: "main_office", SiteCode: "site_code", IDColumn: "id",
 		AmountSets: []AmountFieldSet{
 			{Base: "amount", Usdt: "amount_usdt", Cny: "amount_cny"},
 			{Base: "converted_amount", Usdt: "converted_amount_usdt", Cny: "converted_amount_cny"},
 		},
 	},
 	"acc_operational_information": {
-		MainCode: "main_office", SubCode: "sub_office", SiteCode: "site_code", IDColumn: "id",
+		MainCode: "main_office", SiteCode: "site_code", IDColumn: "id",
 		AmountSets: []AmountFieldSet{
 			{Base: "valid_bet", Usdt: "valid_bet_USDT", Cny: "valid_bet_CNY"},
 			{Base: "cashback", Usdt: "cashback_USDT", Cny: "cashback_CNY"},
@@ -200,21 +197,21 @@ var TableFieldMappings = map[string]FieldMapping{
 		},
 	},
 	"acc_operational_information_excel": {
-		MainCode: "main_office", SubCode: "sub_office", SiteCode: "site_code", IDColumn: "id",
+		MainCode: "main_office", SiteCode: "site_code", IDColumn: "id",
 		AmountSets: []AmountFieldSet{
 			{Base: "amount", Usdt: "amount_usdt", Cny: "amount_cny"},
 			{Base: "bet_amount", Usdt: "bet_amount_usdt", Cny: "bet_amount_cny"},
 		},
 	},
 	"acc_recharge_withdraw_excel": {
-		MainCode: "main_office", SubCode: "sub_office", SiteCode: "site_code", IDColumn: "id",
+		MainCode: "main_office", SiteCode: "site_code", IDColumn: "id",
 		AmountSets: []AmountFieldSet{
 			{Base: "amount", Usdt: "amount_usdt", Cny: "amount_cny"},
-			{Base: "converted_amount", Usdt: "converted_amount_usdt", Cny: "converted_amount_cny"},
+			// {Base: "converted_amount", Usdt: "converted_amount_usdt", Cny: "converted_amount_cny"},
 		},
 	},
 	"account_summary": {
-		MainCode: "main_office", SubCode: "sub_office", SiteCode: "site_code", IDColumn: "id",
+		MainCode: "main_office", SubCode: "sub_code", SiteCode: "site_code", IDColumn: "id",
 		AmountSets: []AmountFieldSet{
 			{Base: "amount", Usdt: "amount_usdt", Cny: "amount_cny"},
 		},
@@ -223,7 +220,19 @@ var TableFieldMappings = map[string]FieldMapping{
 
 // ---------- helpers ----------
 
-func round2(v float64) float64 { return math.Round(v*100) / 100 }
+func round2(v float64) float64 { return math.Round(v*100) / 100 }     //二位小數函式
+func round4(v float64) float64 { return math.Round(v*10000) / 10000 } //四位小數函式
+
+func roundAmount(table, col string, v float64) float64 {
+	if table == "account_summary" && (col == "amount_usdt" || col == "amount_cny") {
+		return round4(v)
+	}
+	return round2(v)
+} // 小計表需算到小數第 4 位；其他維持第 2 位。
+
+func normalizeCode(value string) string { // 統一代碼正規化。
+	return strings.ToLower(strings.TrimSpace(value))
+}
 
 func mapKeys(m map[string]struct{}) []string {
 	keys := make([]string, 0, len(m))
@@ -242,9 +251,19 @@ func fetchRecordsBatch(ctx context.Context, db *gorm.DB, table string, ids []uin
 
 	cols := []string{fmt.Sprintf("`%s` AS id", mapping.IDColumn)}
 	includeCurDate := table != "acc_channel_info"
+	includeFromTable := table == "account_summary"
+	includeTargetSiteCode := table == "account_summary"
+
 	if includeCurDate {
 		cols = append(cols, "`currency`", "`entry_date`")
 	}
+	if includeFromTable { // 小計表用
+		cols = append(cols, "`from_table`")
+	}
+	if includeTargetSiteCode { // 小計表用
+		cols = append(cols, "`target_site_code`")
+	}
+
 	if mapping.SubCode != "" {
 		cols = append(cols, fmt.Sprintf("`%s` AS sub_code", mapping.SubCode))
 	}
@@ -270,7 +289,7 @@ func fetchRecordsBatch(ctx context.Context, db *gorm.DB, table string, ids []uin
 		}
 	}
 
-	// 金額欄位為空，除 acc_channel_info 外都視為錯誤
+	// 金額欄位為空且不是 acc_channel_info 時，直接回空結果，避免撈整張表。 acc_channel_info要補齊辦公室資訊。
 	if table != "acc_channel_info" && len(amountCols) == 0 {
 		log.Printf("[debug][%s] amountCols EMPTY | sets=%+v | mapping.AmountSets=%+v", table, sets, mapping.AmountSets)
 		return map[uint64]recordRow{}, nil
@@ -278,9 +297,8 @@ func fetchRecordsBatch(ctx context.Context, db *gorm.DB, table string, ids []uin
 
 	amountColList := mapKeys(amountCols)
 	sort.Strings(amountColList)
-	log.Printf("[debug-cols][%s] amountColList=%v", table, amountColList)
 
-	for _, c := range amountColList { // 這裡原本是 for c := range amountCols
+	for _, c := range amountColList {
 		if c != "" {
 			cols = append(cols, fmt.Sprintf("`%s`", c))
 		}
@@ -296,12 +314,20 @@ func fetchRecordsBatch(ctx context.Context, db *gorm.DB, table string, ids []uin
 	defer rows.Close()
 
 	recMap := make(map[uint64]recordRow, len(ids))
+
 	for rows.Next() {
 		var rr recordRow
-		var sub, site sql.NullString
+		var sub, site, fromTable, targetSiteCode sql.NullString
 		scanTargets := []any{&rr.ID}
+
 		if includeCurDate {
 			scanTargets = append(scanTargets, &rr.Currency, &rr.EntryDate)
+		}
+		if includeFromTable {
+			scanTargets = append(scanTargets, &fromTable)
+		}
+		if includeTargetSiteCode {
+			scanTargets = append(scanTargets, &targetSiteCode)
 		}
 		if mapping.SubCode != "" {
 			scanTargets = append(scanTargets, &sub)
@@ -320,12 +346,23 @@ func fetchRecordsBatch(ctx context.Context, db *gorm.DB, table string, ids []uin
 		if err := rows.Scan(scanTargets...); err != nil {
 			return nil, err
 		}
+
+		if fromTable.Valid {
+			rr.FromTable = normalizeCode(fromTable.String)
+		}
+
+		if targetSiteCode.Valid {
+			rr.TargetSiteCode = normalizeCode(targetSiteCode.String)
+		}
+
 		if sub.Valid {
-			rr.SubCode = sub.String
+			rr.SubCode = normalizeCode(sub.String)
 		}
+
 		if site.Valid {
-			rr.SiteCode = site.String
+			rr.SiteCode = normalizeCode(site.String)
 		}
+
 		rr.Amounts = make(map[string]sql.NullFloat64, len(amountCols))
 		for c, p := range amountPtrs {
 			rr.Amounts[c] = *p
@@ -341,13 +378,17 @@ func prefetchOffices(ctx context.Context, db *gorm.DB, recMap map[uint64]recordR
 	siteSet := map[string]struct{}{}
 	subSet := map[string]struct{}{}
 	for _, r := range recMap {
-		if r.SiteCode != "" {
-			siteSet[r.SiteCode] = struct{}{}
+		siteKey := normalizeCode(r.SiteCode)
+		if siteKey != "" {
+			siteSet[siteKey] = struct{}{}
 		}
-		if r.SubCode != "" {
-			subSet[r.SubCode] = struct{}{}
+
+		subKey := normalizeCode(r.SubCode)
+		if subKey != "" {
+			subSet[subKey] = struct{}{}
 		}
 	}
+
 	siteMap := map[string]officeInfo{}
 	subMap := map[string]officeInfo{}
 
@@ -372,10 +413,20 @@ func prefetchOffices(ctx context.Context, db *gorm.DB, recMap map[uint64]recordR
 			if err := rows.Scan(&sc, &mc, &mn, &sbc, &sbn, &stn); err != nil {
 				return nil, nil, err
 			}
-			siteMap[sc] = officeInfo{
-				MainCode: mc, MainOffice: mn,
-				SubCode: sbc, SubOffice: sbn,
-				SiteCode: sc, Site: sc,
+			siteKey := normalizeCode(sc)
+
+			// ORDER BY id DESC，保留第一筆最新資料。
+			if _, exists := siteMap[siteKey]; exists {
+				continue
+			}
+
+			siteMap[siteKey] = officeInfo{
+				MainCode:   mc,
+				MainOffice: mn,
+				SubCode:    sbc,
+				SubOffice:  sbn,
+				SiteCode:   sc,
+				Site:       stn,
 			}
 		}
 	}
@@ -400,7 +451,9 @@ func prefetchOffices(ctx context.Context, db *gorm.DB, recMap map[uint64]recordR
 			if err := rows.Scan(&sc, &mc, &mn, &sbc, &sbn); err != nil {
 				return nil, nil, err
 			}
-			subMap[sc] = officeInfo{
+
+			subKey := strings.ToLower(strings.TrimSpace(sc))
+			subMap[subKey] = officeInfo{
 				MainCode: mc, MainOffice: mn,
 				SubCode: sbc, SubOffice: sbn,
 			}
@@ -408,6 +461,62 @@ func prefetchOffices(ctx context.Context, db *gorm.DB, recMap map[uint64]recordR
 	}
 
 	return siteMap, subMap, nil
+}
+
+// ---------- 批次預撈站點 ----------
+
+func prefetchTargetSites(ctx context.Context, db *gorm.DB, recMap map[uint64]recordRow) (map[string]string, error) {
+
+	targetSiteSet := map[string]struct{}{}
+
+	for _, rec := range recMap {
+		if rec.FromTable != "acc_borrow_lend" {
+			continue
+		}
+
+		targetSiteKey := normalizeCode(rec.TargetSiteCode)
+		if targetSiteKey != "" {
+			targetSiteSet[targetSiteKey] = struct{}{}
+		}
+	}
+
+	targetSiteMap := map[string]string{}
+	if len(targetSiteSet) == 0 {
+		return targetSiteMap, nil
+	}
+
+	keys := mapKeys(targetSiteSet)
+
+	rows, err := db.WithContext(ctx).Raw(`
+		SELECT site_code, name
+		FROM data_office_site
+		WHERE deleted_at IS NULL
+		  AND site_code IN ?
+		ORDER BY id DESC
+	`, keys).Rows()
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var siteCode, siteName string
+
+		if err := rows.Scan(&siteCode, &siteName); err != nil {
+			return nil, err
+		}
+
+		targetSiteKey := normalizeCode(siteCode)
+
+		// ORDER BY id DESC，保留第一筆最新資料。
+		if _, exists := targetSiteMap[targetSiteKey]; exists {
+			continue
+		}
+
+		targetSiteMap[targetSiteKey] = siteName
+	}
+
+	return targetSiteMap, nil
 }
 
 // ---------- 批次預撈匯率（一次撈兩方向） ----------
@@ -477,22 +586,77 @@ func prefetchRates(ctx context.Context, db *gorm.DB, recMap map[uint64]recordRow
 
 // ---------- 辦公室/匯率查 cache ----------
 
-func resolveOfficeCached(mapping FieldMapping, rec recordRow, siteMap, subMap map[string]officeInfo) (officeInfo, string) {
+func resolveOfficeCached(table string, mapping FieldMapping, rec recordRow, siteMap map[string]officeInfo, subMap map[string]officeInfo) (officeInfo, string) {
+
+	// account_summary 來源是 acc_cashbook 時，使用 sub_code 查大小辦。
+	if table == "account_summary" {
+		if rec.FromTable == "acc_cashbook" {
+			subKey := normalizeCode(rec.SubCode)
+			if subKey == "" {
+				return officeInfo{}, "原始帳務未填寫【小辦公室編號】"
+			}
+			if oi, ok := subMap[subKey]; ok {
+				return oi, ""
+			}
+			return officeInfo{}, fmt.Sprintf("找不到【小辦公室編號】%s 對應的大辦公室名稱", rec.SubCode)
+		} else {
+			siteKey := normalizeCode(rec.SiteCode)
+			if siteKey == "" {
+				return officeInfo{}, "原始帳務未填寫【站點編號】"
+			}
+			if oi, ok := siteMap[siteKey]; ok {
+				return oi, ""
+			}
+			return officeInfo{}, fmt.Sprintf("找不到【站點編號】%s 對應的大、小辦公室名稱", rec.SiteCode)
+		}
+	}
+	// if table == "account_summary" && rec.FromTable == "acc_cashbook" {
+	// 	subKey := normalizeCode(rec.SubCode)
+	// 	if subKey == "" {
+	// 		return officeInfo{}, "找不到【小辦公室編號】對應的大辦公室名稱"
+	// 	}
+
+	// 	if oi, ok := subMap[subKey]; ok {
+	// 		return oi, ""
+	// 	}
+
+	// 	return officeInfo{}, fmt.Sprintf("找不到【小辦公室編號】%s 對應的大辦公室名稱", rec.SubCode)
+	// }
+
+	//	要放在其後 if table == "account_summary" && rec.FromTable == "acc_cashbook" {
+	if mapping.SiteCode != "" && rec.SiteCode == "" {
+		return officeInfo{}, "原始帳務未填寫【站點編號】"
+	}
+	//	要放在其後 if table == "account_summary" && rec.FromTable == "acc_cashbook" {
+	if mapping.SubCode != "" && rec.SubCode == "" {
+		return officeInfo{}, "原始帳務未填寫【小辦公室編號】"
+	}
+
+	// 其他情況優先使用 site_code。
 	if mapping.SiteCode != "" && rec.SiteCode != "" {
-		if oi, ok := siteMap[rec.SiteCode]; ok {
+		siteKey := normalizeCode(rec.SiteCode)
+
+		if oi, ok := siteMap[siteKey]; ok {
 			return oi, ""
 		}
-		// return officeInfo{}, "office not found by site_code"
-		return officeInfo{}, "大小辦公室不存在"
+
+		return officeInfo{}, fmt.Sprintf("找不到【站點編號】%s 對應的大、小辦公室名稱", rec.SiteCode)
 	}
+
+	// 沒有 site_code 時，再使用 sub_code。
 	if mapping.SubCode != "" && rec.SubCode != "" {
-		if oi, ok := subMap[rec.SubCode]; ok {
+
+		subKey := normalizeCode(rec.SubCode)
+
+		if oi, ok := subMap[subKey]; ok {
 			return oi, ""
 		}
-		// return officeInfo{}, "office not found by sub_code"
-		return officeInfo{}, "大小辦公室不存在"
+
+		return officeInfo{}, fmt.Sprintf("找不到【小辦公室編號】%s 對應的大辦公室名稱", rec.SubCode)
 	}
-	return officeInfo{}, ""
+
+	// return officeInfo{}, ""
+	return officeInfo{}, "大小辦公室名稱解析不到"
 }
 
 // 2) 自幣對自幣直接回 1，並標準化 from/to
@@ -506,21 +670,48 @@ func lookupRateCached(rateMap map[rateKey]float64, date time.Time, from, to stri
 	if r, ok := rateMap[k]; ok {
 		return r, nil
 	}
-	// return 0, fmt.Errorf("lookupRate: no rate for %s %s->%s", k.Date, from, to)
-	// return 0, fmt.Errorf("貨幣設置缺少:日期:%s 原幣別:%s->兌換幣別:%s", k.Date, from, to)
-	return 0, fmt.Errorf("日期:%s 幣別:%s 匯率不存在", k.Date, from)
+
+	return 0, fmt.Errorf("查無日期【%s】的【%s】匯率資料", k.Date, from)
 }
 
 // ---------- per-record 計算（用 cache，不打 DB） ----------
 func computeUpdateCached(mapping FieldMapping, sets []AmountFieldSet, rec recordRow,
-	siteMap, subMap map[string]officeInfo, rateMap map[rateKey]float64,
+	siteMap, subMap map[string]officeInfo, targetSiteMap map[string]string, rateMap map[rateKey]float64,
 	table string, logger *log.Logger) (map[string]any, string) {
 
-	office, officeReason := resolveOfficeCached(mapping, rec, siteMap, subMap)
+	office, officeReason := resolveOfficeCached(table, mapping, rec, siteMap, subMap)
+
 	allOK := (officeReason == "")
 	rateReason := ""
+	targetSiteReason := ""
 	rateReasonSeen := map[string]struct{}{} //0213，避免同一筆資料因多個金額欄位缺匯率而重複累加原因
 	update := map[string]any{}
+
+	if table == "account_summary" &&
+		rec.FromTable == "acc_borrow_lend" {
+
+		targetSiteKey := normalizeCode(rec.TargetSiteCode)
+
+		// if targetSiteKey == "" {
+		// 	// allOK = false
+		// 	// targetSiteReason = "原始帳務未填寫【對象站點編號】"
+		// } else if targetSite, ok := targetSiteMap[targetSiteKey]; ok {
+		// 	update["target_site"] = targetSite
+		// } else {
+		// 	allOK = false
+		// 	targetSiteReason = fmt.Sprintf("找不到【對象站點編號】%s 對應的對象站點名稱", rec.TargetSiteCode)
+		// }
+
+		//0612_如果不存在不需要列錯誤，就留空即可。因為只有某些會計科目才會出現對象站點編號 並非全部
+		if targetSiteKey != "" {
+			if targetSite, ok := targetSiteMap[targetSiteKey]; ok {
+				update["target_site"] = targetSite
+			} else {
+				allOK = false
+				targetSiteReason = fmt.Sprintf("找不到【對象站點編號】%s 對應的對象站點名稱", rec.TargetSiteCode)
+			}
+		}
+	}
 
 	cur := strings.ToUpper(strings.TrimSpace(rec.Currency.String))
 	dt := rec.EntryDate.Time
@@ -543,23 +734,24 @@ func computeUpdateCached(mapping FieldMapping, sets []AmountFieldSet, rec record
 			update[cnyCol] = nil
 			continue
 		}
-
-		if !rec.Currency.Valid || !rec.EntryDate.Valid {
+		//只用 status = 2 查詢，缺日期或幣別的資料會被處理。但要加上空字串幣別判為「幣別不存在」。
+		if !rec.Currency.Valid || strings.TrimSpace(rec.Currency.String) == "" || !rec.EntryDate.Valid {
 			allOK = false
-			if !rec.Currency.Valid {
-				// rateReason = appendReason(rateReason, "currency NULL")
-				rateReason = appendReason(rateReason, "幣別不存在")
+
+			if !rec.Currency.Valid || strings.TrimSpace(rec.Currency.String) == "" {
+				rateReason = appendReason(rateReason, "原始帳務未填寫【幣別】")
 			}
 			if !rec.EntryDate.Valid {
-				// rateReason = appendReason(rateReason, "entry_date NULL")
-				rateReason = appendReason(rateReason, "帳務日期不存在")
+				rateReason = appendReason(rateReason, "原始帳務未填寫【帳務日期】")
 			}
 			continue
-		}
+		} //缺日期／幣別 end
 
+		//修改 base 金額四捨五入邏輯，改為先換算再四捨五入，避免因為 base 金額的小數位數不同而導致換算後金額不一致的問題。
 		base := baseVal.Float64
-		amountCny := base
-		amountUsdt := base
+		amountCny := roundAmount(table, cnyCol, base)
+		amountUsdt := roundAmount(table, usdtCol, base)
+
 		rateOK := true
 		rReason := ""
 
@@ -570,7 +762,7 @@ func computeUpdateCached(mapping FieldMapping, sets []AmountFieldSet, rec record
 				rateOK = false
 				rReason = err.Error()
 			} else {
-				amountUsdt = round2(base * r)
+				amountUsdt = roundAmount(table, usdtCol, base*r)
 			}
 		case "USDT":
 			r, err := lookupRateCached(rateMap, dt, "USDT", "CNY")
@@ -578,7 +770,7 @@ func computeUpdateCached(mapping FieldMapping, sets []AmountFieldSet, rec record
 				rateOK = false
 				rReason = err.Error()
 			} else {
-				amountCny = round2(base * r)
+				amountCny = roundAmount(table, cnyCol, base*r)
 			}
 		default:
 			rCNY, err1 := lookupRateCached(rateMap, dt, cur, "CNY")
@@ -590,8 +782,8 @@ func computeUpdateCached(mapping FieldMapping, sets []AmountFieldSet, rec record
 				rateOK = false
 				rReason = err2.Error()
 			} else {
-				amountCny = round2(base * rCNY)
-				amountUsdt = round2(base * rUSDT)
+				amountCny = roundAmount(table, cnyCol, base*rCNY)
+				amountUsdt = roundAmount(table, usdtCol, base*rUSDT)
 			}
 		}
 
@@ -632,6 +824,7 @@ func computeUpdateCached(mapping FieldMapping, sets []AmountFieldSet, rec record
 	}
 
 	reasonText := buildReason(officeReason, rateReason)
+	reasonText = appendReason(reasonText, targetSiteReason)
 	if allOK {
 		update["status"] = 1
 		update["recompute_info"] = nil
@@ -655,12 +848,10 @@ func appendReason(cur, add string) string {
 func buildReason(officeReason, rateReason string) string {
 	parts := []string{}
 	if officeReason != "" {
-		// parts = append(parts, "office_reason="+officeReason)
 		// parts = append(parts, "辦公室原因="+officeReason)
 		parts = append(parts, "- "+officeReason)
 	}
 	if rateReason != "" {
-		// parts = append(parts, "rate_reason="+rateReason)
 		// parts = append(parts, "匯率原因="+rateReason)
 		parts = append(parts, "- "+rateReason)
 	}
@@ -668,7 +859,7 @@ func buildReason(officeReason, rateReason string) string {
 }
 
 // 批次 UPDATE：用 CASE 把多筆合成一條 SQL（無插入路徑）
-func batchUpdate(ctx context.Context, db *gorm.DB, table, idCol string, rows []map[string]any, batchSize int, debug bool, logger *log.Logger) error {
+func batchUpdate(ctx context.Context, db *gorm.DB, table, idCol string, rows []map[string]any, debug bool, logger *log.Logger) error {
 	if len(rows) == 0 {
 		return nil
 	}
@@ -705,7 +896,7 @@ func batchUpdate(ctx context.Context, db *gorm.DB, table, idCol string, rows []m
 	}
 
 	inPlaceholders := strings.TrimRight(strings.Repeat("?,", len(ids)), ",")
-	sqlStr := fmt.Sprintf("UPDATE `%s` SET %s WHERE `%s` IN (%s)",
+	sqlStr := fmt.Sprintf("UPDATE `%s` SET %s WHERE status = 2 AND `%s` IN (%s)",
 		table, strings.Join(setClauses, ", "), idCol, inPlaceholders)
 
 	// CASE 的參數在前，IN (...) 的 id 參數接在後
@@ -716,14 +907,16 @@ func batchUpdate(ctx context.Context, db *gorm.DB, table, idCol string, rows []m
 		return fmt.Errorf("batchUpdate: placeholder mismatch sql ?=%d args=%d", strings.Count(sqlStr, "?"), len(args))
 	}
 
-	// 檢查批次長度
-	if len(ids) != batchSize {
-		logger.Printf("[WARN][%s] ids count %d != batchSize %d, ids=%v", table, len(ids), batchSize, ids)
-		return fmt.Errorf("batchUpdate: ids count %d != batchSize %d", len(ids), batchSize)
-	}
-
 	if debug {
-		logger.Printf("[SQL][%s] %s | args=%v", table, sqlStr, args)
+		debugSQL := BuildDebugSQL(sqlStr, args)
+		logger.Printf(
+			// "[SQL][%s]\nraw_sql=%s\nargs=%v\ndebug_sql=%s",
+			"[SQL][%s]\ndebug_sql=%s",
+			table,
+			// sqlStr,
+			// args,
+			debugSQL,
+		)
 	}
 	return db.WithContext(ctx).Exec(sqlStr, args...).Error
 }
@@ -752,6 +945,7 @@ func fetchIDsAfterID(ctx context.Context, db *gorm.DB, tbl, idCol, whereSQL stri
 
 // ---------- per-table loop ----------
 func handleTable(ctx context.Context, db *gorm.DB, table string, batchSize int, debug bool, logger *log.Logger) bool {
+
 	mapping, ok := TableFieldMappings[table]
 	if !ok {
 		logger.Printf("[%s] mapping not found, skip", table)
@@ -761,16 +955,11 @@ func handleTable(ctx context.Context, db *gorm.DB, table string, batchSize int, 
 		mapping.IDColumn = "id"
 	}
 	sets := mapping.AmountSets
-	if len(sets) == 0 {
-		sets = []AmountFieldSet{{Base: mapping.BaseAmount, Usdt: mapping.UsdtAmount, Cny: mapping.CnyAmount}}
-	}
-	logger.Printf("[debug-1][%s] sets len=%d sample=%+v", table, len(sets), sets)
 
 	lastID := uint64(0)
 	whereSQL := "status = 2"
-	if table != "acc_channel_info" {
-		whereSQL += " AND entry_date IS NOT NULL AND currency IS NOT NULL AND currency <> ''"
-	}
+	//只用 status = 2 查詢，缺日期或幣別的資料會被處理。但要加上空字串幣別判為「幣別不存在」。
+
 	anyProcessed := false
 
 	for {
@@ -797,6 +986,16 @@ func handleTable(ctx context.Context, db *gorm.DB, table string, batchSize int, 
 			logger.Printf("[%s] prefetch offices error: %v", table, err)
 			continue
 		}
+
+		targetSiteMap := map[string]string{}
+
+		if table == "account_summary" {
+			targetSiteMap, err = prefetchTargetSites(ctx, db, recMap)
+			if err != nil {
+				logger.Printf("[%s] prefetch target sites error: %v", table, err)
+				continue
+			}
+		}
 		rateMap, err := prefetchRates(ctx, db, recMap)
 		if err != nil {
 			logger.Printf("[%s] prefetch rates error: %v", table, err)
@@ -811,7 +1010,7 @@ func handleTable(ctx context.Context, db *gorm.DB, table string, batchSize int, 
 			if !ok {
 				continue
 			}
-			upd, reason := computeUpdateCached(mapping, sets, rec, siteMap, subMap, rateMap, table, logger)
+			upd, reason := computeUpdateCached(mapping, sets, rec, siteMap, subMap, targetSiteMap, rateMap, table, logger)
 			if len(upd) == 0 {
 				logger.Printf("[recompute][%s][%d] skip: %s", table, id, reason)
 				continue
@@ -829,15 +1028,17 @@ func handleTable(ctx context.Context, db *gorm.DB, table string, batchSize int, 
 			continue
 		}
 
-		// 快車道：批次 UPDATE（無插入路徑）
-		err = batchUpdate(ctx, db, table, mapping.IDColumn, updatesBatch, batchSize, debug, logger)
+		// 快車道：批次 UPDATE
+		err = batchUpdate(ctx, db, table, mapping.IDColumn, updatesBatch, debug, logger)
 
 		if err != nil {
-			logger.Printf("[recompute][%s] batch update failed: %v, fallback to per-row", table, err)
 			for _, row := range updatesBatch { // 慢車道
 				id := row[mapping.IDColumn]
 				delete(row, mapping.IDColumn)
 				res := db.Table(table).Where(fmt.Sprintf("%s = ? AND status = 2", mapping.IDColumn), id).Updates(row)
+				//印出嘗試慢車道更新的紀錄，方便後續分析是哪些資料有問題需要人工干預
+				logger.Printf("[recompute][%s][%v] slow-path update attempted for columns %v, error: %v", table, id, mapKeys(updateCols), res.Error)
+
 				if res.Error != nil {
 					logger.Printf("[recompute][%s][%v] slow-path error: %v", table, id, res.Error)
 				}
@@ -845,6 +1046,57 @@ func handleTable(ctx context.Context, db *gorm.DB, table string, batchSize int, 
 		}
 
 	}
+}
+
+// ---------- debug 組update的sql----------
+func BuildDebugSQL(sqlStr string, args []interface{}) string {
+	var b strings.Builder
+	argIndex := 0
+
+	for i := 0; i < len(sqlStr); i++ {
+		if sqlStr[i] == '?' && argIndex < len(args) {
+			b.WriteString(formatSQLValue(args[argIndex]))
+			argIndex++
+		} else {
+			b.WriteByte(sqlStr[i])
+		}
+	}
+
+	return b.String()
+}
+
+func formatSQLValue(v interface{}) string {
+	if v == nil {
+		return "NULL"
+	}
+
+	switch val := v.(type) {
+	case string:
+		return "'" + escapeSQLString(val) + "'"
+	case []byte:
+		return "'" + escapeSQLString(string(val)) + "'"
+	case time.Time:
+		return "'" + val.Format("2006-01-02 15:04:05") + "'"
+	case bool:
+		if val {
+			return "1"
+		}
+		return "0"
+	case int, int8, int16, int32, int64:
+		return fmt.Sprintf("%v", val)
+	case uint, uint8, uint16, uint32, uint64:
+		return fmt.Sprintf("%v", val)
+	case float32, float64:
+		return fmt.Sprintf("%v", val)
+	default:
+		return "'" + escapeSQLString(fmt.Sprintf("%v", val)) + "'"
+	}
+}
+
+func escapeSQLString(s string) string {
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, `'`, `''`)
+	return s
 }
 
 // ---------- main ----------
@@ -904,23 +1156,25 @@ func main() {
 		"acc_operational_information",
 		"acc_operational_information_excel",
 		"acc_recharge_withdraw_excel",
+		"account_summary",
 	}
 
 	for {
 		anyPending := false
 		for _, tbl := range tables {
-			time.Sleep(time.Second)
+			time.Sleep(time.Second) // 每處理一個表休息1秒，讓其他系統有機會搶到 DB 連線，減少長時間佔用造成的 500 error
+
 			if handleTable(ctx, db, tbl, cfg.RecomputeBatchSize, debug, logger) {
 				anyPending = true
 			}
-
 		}
+
 		now := time.Now().UTC().Format(time.RFC3339)
 		if !anyPending {
-			logger.Printf("[HEARTBEAT] %s tables=all status=idle", now)
-			time.Sleep(30 * time.Second)
+			logger.Printf("[HEARTBEAT] %s tables=all status=idle(本輪沒待處理資料)", now)
+			time.Sleep(30 * time.Second) // 沒有待處理資料，休息30秒再檢查，避免空轉浪費資源
 		} else {
-			logger.Printf("[HEARTBEAT] %s tables=all status=pending", now)
+			logger.Printf("[HEARTBEAT] %s tables=all status=pending(本輪有待處理資料)", now)
 		}
 	}
 }
