@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
-	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -61,10 +60,10 @@ func loadConfig(path string) (Config, error) {
 func newLogger(logPath string) *log.Logger {
 	lj := &lumberjack.Logger{
 		Filename:   logPath,
-		MaxSize:    100,
-		MaxAge:     7,
-		MaxBackups: 7,
-		Compress:   false,
+		MaxSize:    100,   //單一 log 檔達 100 MB 後輪替。
+		MaxAge:     3,     //備份 log 最多保留 3 天。
+		MaxBackups: 7,     //最多保留 7 個舊 log 檔。
+		Compress:   false, //舊檔不壓縮。
 	}
 	return log.New(lj, "", log.LstdFlags)
 }
@@ -104,6 +103,30 @@ type officeInfo struct {
 	SubOffice  string
 	Site       string
 }
+type recomputeRoundLog struct { // 0614_新增 recomputeRoundLog 表對應結構 start
+	ID        uint64     `gorm:"column:id;primaryKey"`
+	Name      string     `gorm:"column:name"`
+	Status    string     `gorm:"column:status"`
+	StartedAt time.Time  `gorm:"column:started_at"`
+	EndedAt   *time.Time `gorm:"column:ended_at"`
+}
+
+func (recomputeRoundLog) TableName() string {
+	return "log_recompute_round"
+}
+
+type recomputeRoundTableLog struct {
+	ID            uint64     `gorm:"column:id;primaryKey"`
+	RoundID       uint64     `gorm:"column:round_id"`
+	SourceTable   string     `gorm:"column:table_name"`
+	StartedAt     time.Time  `gorm:"column:started_at"`
+	EndedAt       *time.Time `gorm:"column:ended_at"`
+	UpdateIDCount uint64     `gorm:"column:update_id_count"`
+}
+
+func (recomputeRoundTableLog) TableName() string {
+	return "log_recompute_round_table"
+} // 0614_新增 recomputeRoundLog 表對應結構 end
 
 // ---------- table mappings 全表定義---------
 var TableFieldMappings = map[string]FieldMapping{
@@ -220,15 +243,10 @@ var TableFieldMappings = map[string]FieldMapping{
 
 // ---------- helpers ----------
 
-func round2(v float64) float64 { return math.Round(v*100) / 100 }     //二位小數函式
-func round4(v float64) float64 { return math.Round(v*10000) / 10000 } //四位小數函式
-
+// 0706 需求為不算小數位不四捨五入。
 func roundAmount(table, col string, v float64) float64 {
-	if table == "account_summary" && (col == "amount_usdt" || col == "amount_cny") {
-		return round4(v)
-	}
-	return round2(v)
-} // 小計表需算到小數第 4 位；其他維持第 2 位。
+	return v
+}
 
 func normalizeCode(value string) string { // 統一代碼正規化。
 	return strings.ToLower(strings.TrimSpace(value))
@@ -943,14 +961,108 @@ func fetchIDsAfterID(ctx context.Context, db *gorm.DB, tbl, idCol, whereSQL stri
 	return ids, nil
 }
 
+// 0614_dblog 增加 DB LOG 函式 start
+func startRoundLog(ctx context.Context, db *gorm.DB) (*recomputeRoundLog, error) {
+	round := &recomputeRoundLog{
+		Name:      "重算補齊",
+		Status:    "processing",
+		StartedAt: time.Now(),
+	}
+
+	if err := db.WithContext(ctx).Create(round).Error; err != nil {
+		return nil, err
+	}
+
+	return round, nil
+}
+
+func finishRoundLog(
+	ctx context.Context,
+	db *gorm.DB,
+	roundID uint64,
+) error {
+	endedAt := time.Now()
+
+	return db.WithContext(ctx).
+		Model(&recomputeRoundLog{}).
+		Where("id = ?", roundID).
+		Updates(map[string]any{
+			"status":   "completed",
+			"ended_at": endedAt,
+		}).Error
+}
+
+func startTableLog(
+	ctx context.Context,
+	db *gorm.DB,
+	roundID uint64,
+	table string,
+) (*recomputeRoundTableLog, error) {
+	item := &recomputeRoundTableLog{
+		RoundID:       roundID,
+		SourceTable:   table,
+		StartedAt:     time.Now(),
+		UpdateIDCount: 0,
+	}
+
+	if err := db.WithContext(ctx).Create(item).Error; err != nil {
+		return nil, err
+	}
+
+	return item, nil
+}
+
+func finishTableLog(
+	ctx context.Context,
+	db *gorm.DB,
+	tableLogID uint64,
+	updateIDCount uint64,
+) error {
+	endedAt := time.Now()
+
+	return db.WithContext(ctx).
+		Model(&recomputeRoundTableLog{}).
+		Where("id = ?", tableLogID).
+		Updates(map[string]any{
+			"ended_at":        endedAt,
+			"update_id_count": updateIDCount,
+		}).Error
+}
+
+func deleteExpiredRoundLogs(ctx context.Context, db *gorm.DB) error {
+	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// 先刪除明細，避免留下沒有主表的資料。
+		if err := tx.Exec(`
+			DELETE FROM log_recompute_round_table
+			WHERE round_id IN (
+				SELECT id
+				FROM log_recompute_round
+				WHERE started_at < NOW() - INTERVAL 3 DAY
+			)
+		`).Error; err != nil {
+			return err
+		}
+
+		return tx.Exec(`
+			DELETE FROM log_recompute_round
+			WHERE started_at < NOW() - INTERVAL 3 DAY
+		`).Error
+	})
+} // 0614_dblog 增加 DB LOG 函式 end
+
 // ---------- per-table loop ----------
-func handleTable(ctx context.Context, db *gorm.DB, table string, batchSize int, debug bool, logger *log.Logger) bool {
+// 0614_dblog 回傳是否有處理資料，以及更新的資料筆數 start
+// func handleTable(ctx context.Context, db *gorm.DB, table string, batchSize int, debug bool, logger *log.Logger) bool {
+func handleTable(ctx context.Context, db *gorm.DB, table string, batchSize int, debug bool, logger *log.Logger) (bool, uint64) { //0614_dblog 回傳是否有處理資料，以及更新的資料筆數 end
+
+	updateIDCount := uint64(0) //0614_dblog 更新的資料筆數
 
 	mapping, ok := TableFieldMappings[table]
 	if !ok {
 		logger.Printf("[%s] mapping not found, skip", table)
-		return false
+		return false, updateIDCount //0614_dblog updateIDCount沒有 mapping 代表沒有處理資料，回傳 false 和 0
 	}
+
 	if mapping.IDColumn == "" {
 		mapping.IDColumn = "id"
 	}
@@ -966,10 +1078,11 @@ func handleTable(ctx context.Context, db *gorm.DB, table string, batchSize int, 
 		ids, err := fetchIDsAfterID(ctx, db, table, mapping.IDColumn, whereSQL, nil, batchSize, lastID)
 		if err != nil {
 			logger.Printf("[%s] fetch ids error: %v", table, err)
-			return true
+			// return true
+			return true, updateIDCount //0614_dblog updateIDCount發生錯誤也算有處理資料，但更新筆數為 0
 		}
 		if len(ids) == 0 {
-			return anyProcessed
+			return anyProcessed, updateIDCount //0614_dblog updateIDCount沒有資料了才回傳 false，否則回傳 true 代表有處理過資料
 		}
 		anyProcessed = true
 		lastID = ids[len(ids)-1]
@@ -1027,6 +1140,9 @@ func handleTable(ctx context.Context, db *gorm.DB, table string, batchSize int, 
 		if len(updatesBatch) == 0 {
 			continue
 		}
+
+		// 0614 計算實際送進 UPDATE 的 ID 數量。
+		updateIDCount += uint64(len(updatesBatch))
 
 		// 快車道：批次 UPDATE
 		err = batchUpdate(ctx, db, table, mapping.IDColumn, updatesBatch, debug, logger)
@@ -1099,6 +1215,32 @@ func escapeSQLString(s string) string {
 	return s
 }
 
+// // ---------- 寫入本輪完成時間，並清除三天前的紀錄。 0614 ----------
+// func saveRoundLog(
+// 	ctx context.Context,
+// 	db *gorm.DB,
+// 	startedAt time.Time,
+// 	endedAt time.Time,
+// ) error {
+// 	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+// 		if err := tx.Exec(`
+//             INSERT INTO log_recompute_round (started_at, ended_at)
+//             VALUES (?, ?)
+//         `, startedAt, endedAt).Error; err != nil {
+// 			return fmt.Errorf("insert recompute round log: %w", err)
+// 		}
+
+// 		if err := tx.Exec(`
+//             DELETE FROM log_recompute_round
+//             WHERE ended_at < NOW() - INTERVAL 3 DAY
+//         `).Error; err != nil {
+// 			return fmt.Errorf("delete expired recompute round logs: %w", err)
+// 		}
+
+// 		return nil
+// 	})
+// }
+
 // ---------- main ----------
 
 func main() {
@@ -1159,22 +1301,127 @@ func main() {
 		"account_summary",
 	}
 
-	for {
-		anyPending := false
-		for _, tbl := range tables {
-			time.Sleep(time.Second) // 每處理一個表休息1秒，讓其他系統有機會搶到 DB 連線，減少長時間佔用造成的 500 error
+	// for {
+	// 	roundStartedAt := time.Now() //0614_紀錄本輪開始時間
+	// 	anyPending := false
 
-			if handleTable(ctx, db, tbl, cfg.RecomputeBatchSize, debug, logger) {
+	// 	for _, tbl := range tables {
+	// 		time.Sleep(time.Second) // 每處理一個表休息1秒，讓其他系統有機會搶到 DB 連線，減少長時間佔用造成的 500 error
+
+	// 		if handleTable(ctx, db, tbl, cfg.RecomputeBatchSize, debug, logger) {
+	// 			anyPending = true
+	// 		}
+	// 	}
+	// 	roundEndedAt := time.Now() //0614_紀錄本輪結束時間
+	// 	if err := saveRoundLog(    // 0614_寫入本輪完成時間，並清除三天前的紀錄start
+	// 		ctx,
+	// 		db,
+	// 		roundStartedAt,
+	// 		roundEndedAt,
+	// 	); err != nil {
+	// 		logger.Printf("[ROUND] save log error: %v", err)
+	// 	} else {
+	// 		logger.Printf(
+	// 			"[ROUND] completed started_at=%s ended_at=%s",
+	// 			roundStartedAt.Format("2006-01-02 15:04:05"),
+	// 			roundEndedAt.Format("2006-01-02 15:04:05"),
+	// 		)
+	// 	} //0614_寫入本輪完成時間，並清除三天前的紀錄end
+
+	// 	now := time.Now().UTC().Format(time.RFC3339)
+	// 	if !anyPending {
+	// 		logger.Printf("[HEARTBEAT] %s tables=all status=idle(本輪沒待處理資料)", now)
+	// 		time.Sleep(30 * time.Second) // 沒有待處理資料，休息30秒再檢查，避免空轉浪費資源
+	// 	} else {
+	// 		logger.Printf("[HEARTBEAT] %s tables=all status=pending(本輪有待處理資料)", now)
+	// 	}
+	// }
+	//0614_改為每輪有一筆 log 紀錄，並且在每輪開始時就寫入資料庫，結束時更新狀態和結束時間，並刪除三天前的紀錄。這樣可以更準確地反映每輪的執行狀態和時間，並且避免在處理過程中發生錯誤導致 log 無法寫入的問題。
+	for {
+		roundLog, err := startRoundLog(ctx, db)
+		if err != nil {
+			logger.Printf("[ROUND] start log error: %v", err)
+			time.Sleep(30 * time.Second)
+			continue
+		}
+
+		anyPending := false
+
+		for _, tbl := range tables {
+			time.Sleep(time.Second)
+
+			tableLog, logErr := startTableLog(ctx, db, roundLog.ID, tbl)
+			if logErr != nil {
+				logger.Printf(
+					"[ROUND][%d][%s] start table log error: %v",
+					roundLog.ID,
+					tbl,
+					logErr,
+				)
+			}
+
+			processed, updateIDCount := handleTable(
+				ctx,
+				db,
+				tbl,
+				cfg.RecomputeBatchSize,
+				debug,
+				logger,
+			)
+
+			if processed {
 				anyPending = true
+			}
+
+			if tableLog != nil {
+				if logErr := finishTableLog(
+					ctx,
+					db,
+					tableLog.ID,
+					updateIDCount,
+				); logErr != nil {
+					logger.Printf(
+						"[ROUND][%d][%s] finish table log error: %v",
+						roundLog.ID,
+						tbl,
+						logErr,
+					)
+				}
+			}
+		}
+
+		if err := finishRoundLog(ctx, db, roundLog.ID); err != nil {
+			logger.Printf(
+				"[ROUND][%d] finish log error: %v",
+				roundLog.ID,
+				err,
+			)
+		} else {
+			logger.Printf("[ROUND][%d] completed", roundLog.ID)
+
+			if err := deleteExpiredRoundLogs(ctx, db); err != nil {
+				logger.Printf(
+					"[ROUND][%d] delete expired logs error: %v",
+					roundLog.ID,
+					err,
+				)
 			}
 		}
 
 		now := time.Now().UTC().Format(time.RFC3339)
+
 		if !anyPending {
-			logger.Printf("[HEARTBEAT] %s tables=all status=idle(本輪沒待處理資料)", now)
-			time.Sleep(30 * time.Second) // 沒有待處理資料，休息30秒再檢查，避免空轉浪費資源
+			logger.Printf(
+				"[HEARTBEAT] %s tables=all status=idle(本輪沒待處理資料)",
+				now,
+			)
+			time.Sleep(30 * time.Second)
 		} else {
-			logger.Printf("[HEARTBEAT] %s tables=all status=pending(本輪有待處理資料)", now)
+			logger.Printf(
+				"[HEARTBEAT] %s tables=all status=pending(本輪有待處理資料)",
+				now,
+			)
 		}
-	}
+	} //0614_改為每輪有一筆 log 紀錄，並且在每輪開始時就寫入資料庫，結束時更新狀態和結束時間，並刪除三天前的紀錄。這樣可以更準確地反映每輪的執行狀態和時間，並且避免在處理過程中發生錯誤導致 log 無法寫入的問題。
+
 }
