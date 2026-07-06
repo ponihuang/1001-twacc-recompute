@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
-	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -244,15 +243,10 @@ var TableFieldMappings = map[string]FieldMapping{
 
 // ---------- helpers ----------
 
-func round2(v float64) float64 { return math.Round(v*100) / 100 }     //二位小數函式
-func round4(v float64) float64 { return math.Round(v*10000) / 10000 } //四位小數函式
-
+// 0706 需求為不算小數位不四捨五入。
 func roundAmount(table, col string, v float64) float64 {
-	if table == "account_summary" && (col == "amount_usdt" || col == "amount_cny") {
-		return round4(v)
-	}
-	return round2(v)
-} // 小計表需算到小數第 4 位；其他維持第 2 位。
+	return v
+}
 
 func normalizeCode(value string) string { // 統一代碼正規化。
 	return strings.ToLower(strings.TrimSpace(value))
