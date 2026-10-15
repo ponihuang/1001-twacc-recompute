@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/shopspring/decimal"
 	"gopkg.in/natefinch/lumberjack.v2"
 	"gopkg.in/yaml.v3"
 	"gorm.io/driver/mysql"
@@ -92,7 +93,7 @@ type recordRow struct {
 	SiteCode       string
 	FromTable      string
 	TargetSiteCode string
-	Amounts        map[string]sql.NullFloat64
+	Amounts        map[string]decimal.NullDecimal
 }
 
 type officeInfo struct {
@@ -243,17 +244,15 @@ var TableFieldMappings = map[string]FieldMapping{
 
 // ---------- helpers ----------
 
-// 0706 需求為不算小數位不四捨五入。
-func roundAmount(table, col string, v float64) float64 {
+// 0706 需求為不算小數位不四捨五入。 // 1015 修正浮點精度損失
+func roundAmount(table, col string, v decimal.Decimal) decimal.Decimal {
 	return v
 }
 
-// 0708 需求為不算小數位不四捨五入。exceedsDecimal24_10 用於判斷金額是否超過 24 位整數 + 10 位小數的範圍。
-func exceedsDecimal24_10(v float64) bool {
-	if v < 0 {
-		v = -v
-	}
-	return v >= 100000000000000
+// DECIMAL(24,10) 共24位，其中10位小數，最多14位整數。
+// 1015 修正浮點精度損失,只檢查整數容量；不新增應用程式層的小數捨入或截斷規則。
+func exceedsDecimal24_10(v decimal.Decimal) bool {
+	return v.Abs().Cmp(decimal.New(1, 14)) >= 0
 }
 
 func normalizeCode(value string) string { // 統一代碼正規化。
@@ -326,7 +325,8 @@ func fetchRecordsBatch(ctx context.Context, db *gorm.DB, table string, ids []uin
 
 	for _, c := range amountColList {
 		if c != "" {
-			cols = append(cols, fmt.Sprintf("`%s`", c))
+			// 1015 修正浮點精度損失, 以文字讀取十進位金額，避免先經過 float64 而遺失精度。
+			cols = append(cols, fmt.Sprintf("CAST(`%s` AS CHAR) AS `%s`", c, c))
 		}
 	}
 
@@ -362,9 +362,9 @@ func fetchRecordsBatch(ctx context.Context, db *gorm.DB, table string, ids []uin
 			scanTargets = append(scanTargets, &site)
 		}
 
-		amountPtrs := make(map[string]*sql.NullFloat64, len(amountCols)) // 這行是關鍵，不能少
+		amountPtrs := make(map[string]*decimal.NullDecimal, len(amountCols)) // 這行是關鍵，不能少  // 1015 修正浮點精度損失
 		for _, c := range amountColList {
-			v := sql.NullFloat64{}
+			v := decimal.NullDecimal{} // 1015 修正浮點精度損失
 			amountPtrs[c] = &v
 			scanTargets = append(scanTargets, amountPtrs[c])
 		}
@@ -389,11 +389,14 @@ func fetchRecordsBatch(ctx context.Context, db *gorm.DB, table string, ids []uin
 			rr.SiteCode = normalizeCode(site.String)
 		}
 
-		rr.Amounts = make(map[string]sql.NullFloat64, len(amountCols))
+		rr.Amounts = make(map[string]decimal.NullDecimal, len(amountCols)) // 1015 修正浮點精度損失
 		for c, p := range amountPtrs {
 			rr.Amounts[c] = *p
 		}
 		recMap[rr.ID] = rr
+	}
+	if err := rows.Err(); err != nil { // 1015 修正浮點精度損失
+		return nil, err
 	}
 	return recMap, nil
 }
@@ -553,8 +556,8 @@ type rateKey struct {
 	To   string
 }
 
-// 1) 統一 rate key：prefetchRates
-func prefetchRates(ctx context.Context, db *gorm.DB, recMap map[uint64]recordRow) (map[rateKey]float64, error) {
+// 1) 統一 rate key：prefetchRates  // 1015 修正浮點精度損失
+func prefetchRates(ctx context.Context, db *gorm.DB, recMap map[uint64]recordRow) (map[rateKey]decimal.Decimal, error) {
 	dateSet := map[string]struct{}{}
 	curSet := map[string]struct{}{}
 	for _, r := range recMap {
@@ -566,14 +569,14 @@ func prefetchRates(ctx context.Context, db *gorm.DB, recMap map[uint64]recordRow
 		curSet[cur] = struct{}{}
 	}
 	if len(dateSet) == 0 || len(curSet) == 0 {
-		return map[rateKey]float64{}, nil
+		return map[rateKey]decimal.Decimal{}, nil // 1015 修正浮點精度損失
 	}
 
 	dates := mapKeys(dateSet)
 	curs := mapKeys(curSet)
-
+	// 1015 修正浮點精度損失, 只撈 CNY/USDT 匯率，避免撈到其他幣別，造成不必要的資料量。
 	rows, err := db.WithContext(ctx).Raw(`
-        SELECT DATE(date_at) AS date_at, currency_from, currency_to, rate
+        SELECT DATE(date_at) AS date_at, currency_from, currency_to, CAST(rate AS CHAR) AS rate
         FROM sys_currency_rate_record
         WHERE deleted_at IS NULL
           AND currency_to IN ('CNY','USDT')
@@ -586,10 +589,10 @@ func prefetchRates(ctx context.Context, db *gorm.DB, recMap map[uint64]recordRow
 	}
 	defer rows.Close()
 
-	rateMap := map[rateKey]float64{}
+	rateMap := map[rateKey]decimal.Decimal{} // 1015 修正浮點精度損失
 	for rows.Next() {
 		var d, f, t string
-		var rate float64
+		var rate decimal.Decimal // 1015 修正浮點精度損失
 		if err := rows.Scan(&d, &f, &t, &rate); err != nil {
 			return nil, err
 		}
@@ -607,6 +610,9 @@ func prefetchRates(ctx context.Context, db *gorm.DB, recMap map[uint64]recordRow
 		}
 	}
 
+	if err := rows.Err(); err != nil { // 1015 修正浮點精度損失
+		return nil, err
+	}
 	return rateMap, nil
 }
 
@@ -686,23 +692,23 @@ func resolveOfficeCached(table string, mapping FieldMapping, rec recordRow, site
 }
 
 // 2) 自幣對自幣直接回 1，並標準化 from/to
-func lookupRateCached(rateMap map[rateKey]float64, date time.Time, from, to string) (float64, error) {
+func lookupRateCached(rateMap map[rateKey]decimal.Decimal, date time.Time, from, to string) (decimal.Decimal, error) {
 	from = strings.ToUpper(strings.TrimSpace(from))
 	to = strings.ToUpper(strings.TrimSpace(to))
 	if from == to {
-		return 1, nil
+		return decimal.NewFromInt(1), nil
 	}
 	k := rateKey{Date: date.Format("2006-01-02"), From: from, To: to}
 	if r, ok := rateMap[k]; ok {
 		return r, nil
 	}
 
-	return 0, fmt.Errorf("查無日期【%s】的【%s】匯率資料", k.Date, from)
+	return decimal.Zero, fmt.Errorf("查無日期【%s】的【%s】匯率資料", k.Date, from)
 }
 
 // ---------- per-record 計算（用 cache，不打 DB） ----------
 func computeUpdateCached(mapping FieldMapping, sets []AmountFieldSet, rec recordRow,
-	siteMap, subMap map[string]officeInfo, targetSiteMap map[string]string, rateMap map[rateKey]float64,
+	siteMap, subMap map[string]officeInfo, targetSiteMap map[string]string, rateMap map[rateKey]decimal.Decimal,
 	table string, logger *log.Logger) (map[string]any, string) {
 
 	office, officeReason := resolveOfficeCached(table, mapping, rec, siteMap, subMap)
@@ -773,8 +779,8 @@ func computeUpdateCached(mapping FieldMapping, sets []AmountFieldSet, rec record
 			continue
 		} //缺日期／幣別 end
 
-		//修改 base 金額四捨五入邏輯，改為先換算再四捨五入，避免因為 base 金額的小數位數不同而導致換算後金額不一致的問題。
-		base := baseVal.Float64
+		// 金額、匯率、乘法與容量比較全程使用精確十進位。
+		base := baseVal.Decimal
 		amountCny := roundAmount(table, cnyCol, base)
 		amountUsdt := roundAmount(table, usdtCol, base)
 
@@ -788,7 +794,7 @@ func computeUpdateCached(mapping FieldMapping, sets []AmountFieldSet, rec record
 				rateOK = false
 				rReason = err.Error()
 			} else {
-				amountUsdt = roundAmount(table, usdtCol, base*r)
+				amountUsdt = roundAmount(table, usdtCol, base.Mul(r))
 			}
 		case "USDT":
 			r, err := lookupRateCached(rateMap, dt, "USDT", "CNY")
@@ -796,7 +802,7 @@ func computeUpdateCached(mapping FieldMapping, sets []AmountFieldSet, rec record
 				rateOK = false
 				rReason = err.Error()
 			} else {
-				amountCny = roundAmount(table, cnyCol, base*r)
+				amountCny = roundAmount(table, cnyCol, base.Mul(r))
 			}
 		default:
 			rCNY, err1 := lookupRateCached(rateMap, dt, cur, "CNY")
@@ -808,12 +814,12 @@ func computeUpdateCached(mapping FieldMapping, sets []AmountFieldSet, rec record
 				rateOK = false
 				rReason = err2.Error()
 			} else {
-				amountCny = roundAmount(table, cnyCol, base*rCNY)
-				amountUsdt = roundAmount(table, usdtCol, base*rUSDT)
+				amountCny = roundAmount(table, cnyCol, base.Mul(rCNY))
+				amountUsdt = roundAmount(table, usdtCol, base.Mul(rUSDT))
 			}
 		}
 
-		//0708 需求為不算小數位不四捨五入。exceedsDecimal24_10 用於判斷金額是否超過 24 位整數 + 10 位小數的範圍。start
+		// 維持不額外捨入及同組任一超界就略過兩個目的金額的規則。
 		// if rateOK {
 		// 	update[cnyCol] = amountCny
 		// 	update[usdtCol] = amountUsdt
@@ -851,8 +857,9 @@ func computeUpdateCached(mapping FieldMapping, sets []AmountFieldSet, rec record
 				continue
 			}
 
-			update[cnyCol] = amountCny
-			update[usdtCol] = amountUsdt
+			// 用十進位字串參數寫入；不轉回 float64。
+			update[cnyCol] = amountCny.String()
+			update[usdtCol] = amountUsdt.String()
 		} else {
 			allOK = false
 			// rateReason = appendReason(rateReason, rReason)
@@ -863,7 +870,7 @@ func computeUpdateCached(mapping FieldMapping, sets []AmountFieldSet, rec record
 					rateReason = appendReason(rateReason, rReason)
 				}
 			}
-		} //0708 需求為不算小數位不四捨五入。exceedsDecimal24_10 用於判斷金額是否超過 24 位整數 + 10 位小數的範圍。 end
+		} // 金額超界／匯率處理結束
 	}
 
 	// 辦公/站點補齊
