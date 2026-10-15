@@ -93,6 +93,7 @@ type recordRow struct {
 	SiteCode       string
 	FromTable      string
 	TargetSiteCode string
+	GameGenres     sql.NullString // 後台運營原始遊戲類型
 	Amounts        map[string]decimal.NullDecimal
 }
 
@@ -278,6 +279,7 @@ func fetchRecordsBatch(ctx context.Context, db *gorm.DB, table string, ids []uin
 	includeCurDate := table != "acc_channel_info"
 	includeFromTable := table == "account_summary"
 	includeTargetSiteCode := table == "account_summary"
+	includeGameGenres := table == "acc_operational_information"
 
 	if includeCurDate {
 		cols = append(cols, "`currency`", "`entry_date`")
@@ -287,6 +289,9 @@ func fetchRecordsBatch(ctx context.Context, db *gorm.DB, table string, ids []uin
 	}
 	if includeTargetSiteCode { // 小計表用
 		cols = append(cols, "`target_site_code`")
+	}
+	if includeGameGenres {
+		cols = append(cols, "`game_genres`")
 	}
 
 	if mapping.SubCode != "" {
@@ -354,6 +359,9 @@ func fetchRecordsBatch(ctx context.Context, db *gorm.DB, table string, ids []uin
 		}
 		if includeTargetSiteCode {
 			scanTargets = append(scanTargets, &targetSiteCode)
+		}
+		if includeGameGenres {
+			scanTargets = append(scanTargets, &rr.GameGenres)
 		}
 		if mapping.SubCode != "" {
 			scanTargets = append(scanTargets, &sub)
@@ -709,13 +717,14 @@ func lookupRateCached(rateMap map[rateKey]decimal.Decimal, date time.Time, from,
 // ---------- per-record 計算（用 cache，不打 DB） ----------
 func computeUpdateCached(mapping FieldMapping, sets []AmountFieldSet, rec recordRow,
 	siteMap, subMap map[string]officeInfo, targetSiteMap map[string]string, rateMap map[rateKey]decimal.Decimal,
-	table string, logger *log.Logger) (map[string]any, string) {
+	gameClassMap map[string]string, table string, logger *log.Logger) (map[string]any, string) {
 
 	office, officeReason := resolveOfficeCached(table, mapping, rec, siteMap, subMap)
 
 	allOK := (officeReason == "")
 	rateReason := ""
 	targetSiteReason := ""
+	gameClassReason := ""
 	rateReasonSeen := map[string]struct{}{} //0213，避免同一筆資料因多個金額欄位缺匯率而重複累加原因
 	update := map[string]any{}
 
@@ -893,8 +902,17 @@ func computeUpdateCached(mapping FieldMapping, sets []AmountFieldSet, rec record
 		update["site"] = office.Site
 	}
 
+	// 分類檢查不放進金額迴圈，NULL金額及金額超界不能略過分類。
+	if table == "acc_operational_information" {
+		gameClassReason = resolveGameClassReason(rec.GameGenres, gameClassMap)
+		if gameClassReason != "" {
+			allOK = false
+		}
+	}
+
 	reasonText := buildReason(officeReason, rateReason)
 	reasonText = appendReason(reasonText, targetSiteReason)
+	reasonText = appendReason(reasonText, gameClassReason)
 	if allOK {
 		update["status"] = 1
 		update["recompute_info"] = nil
@@ -1167,6 +1185,15 @@ func handleTable(ctx context.Context, db *gorm.DB, table string, batchSize int, 
 			continue
 		}
 
+		var gameClassMap map[string]string
+		if table == "acc_operational_information" {
+			gameClassMap, err = prefetchGameClasses(ctx, db, recMap)
+			if err != nil {
+				logger.Printf("[%s] prefetch game classes error: %v", table, err)
+				continue // SQL讀取失敗，不宣告缺對照，也不把該批改成成功。
+			}
+		}
+
 		updatesBatch := make([]map[string]any, 0, len(ids))
 		updateCols := map[string]struct{}{}
 
@@ -1175,7 +1202,7 @@ func handleTable(ctx context.Context, db *gorm.DB, table string, batchSize int, 
 			if !ok {
 				continue
 			}
-			upd, reason := computeUpdateCached(mapping, sets, rec, siteMap, subMap, targetSiteMap, rateMap, table, logger)
+			upd, reason := computeUpdateCached(mapping, sets, rec, siteMap, subMap, targetSiteMap, rateMap, gameClassMap, table, logger)
 			if len(upd) == 0 {
 				logger.Printf("[recompute][%s][%d] skip: %s", table, id, reason)
 				continue
