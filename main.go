@@ -248,6 +248,14 @@ func roundAmount(table, col string, v float64) float64 {
 	return v
 }
 
+// 0708 需求為不算小數位不四捨五入。exceedsDecimal24_10 用於判斷金額是否超過 24 位整數 + 10 位小數的範圍。
+func exceedsDecimal24_10(v float64) bool {
+	if v < 0 {
+		v = -v
+	}
+	return v >= 100000000000000
+}
+
 func normalizeCode(value string) string { // 統一代碼正規化。
 	return strings.ToLower(strings.TrimSpace(value))
 }
@@ -805,7 +813,44 @@ func computeUpdateCached(mapping FieldMapping, sets []AmountFieldSet, rec record
 			}
 		}
 
+		//0708 需求為不算小數位不四捨五入。exceedsDecimal24_10 用於判斷金額是否超過 24 位整數 + 10 位小數的範圍。start
+		// if rateOK {
+		// 	update[cnyCol] = amountCny
+		// 	update[usdtCol] = amountUsdt
+		// } else {
+		// 	allOK = false
+		// 	// rateReason = appendReason(rateReason, rReason)
+		// 	// 0213 已改為只累一次原因，避免同一筆資料因多個金額欄位缺匯率而重複累加原因
+		// 	if rReason != "" {
+		// 		if _, ok := rateReasonSeen[rReason]; !ok {
+		// 			rateReasonSeen[rReason] = struct{}{}
+		// 			rateReason = appendReason(rateReason, rReason)
+		// 		}
+		// 	}
+		// }
 		if rateOK {
+			overflowReason := ""
+
+			if exceedsDecimal24_10(amountCny) {
+				overflowReason = appendReason(
+					overflowReason,
+					fmt.Sprintf("%s 數字過大無法儲存", "CNY"),
+				)
+			}
+
+			if exceedsDecimal24_10(amountUsdt) {
+				overflowReason = appendReason(
+					overflowReason,
+					fmt.Sprintf("%s 數字過大無法儲存", "USDT"),
+				)
+			}
+
+			if overflowReason != "" {
+				allOK = false
+				rateReason = appendReason(rateReason, overflowReason)
+				continue
+			}
+
 			update[cnyCol] = amountCny
 			update[usdtCol] = amountUsdt
 		} else {
@@ -818,7 +863,7 @@ func computeUpdateCached(mapping FieldMapping, sets []AmountFieldSet, rec record
 					rateReason = appendReason(rateReason, rReason)
 				}
 			}
-		}
+		} //0708 需求為不算小數位不四捨五入。exceedsDecimal24_10 用於判斷金額是否超過 24 位整數 + 10 位小數的範圍。 end
 	}
 
 	// 辦公/站點補齊
